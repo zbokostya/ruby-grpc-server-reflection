@@ -63,58 +63,47 @@ module GrpcReflection
     # --- ObjectSpace fallback for older protobuf versions ---
 
     def build_index_from_object_space
-      # Collect raw data grouped by file
-      file_messages = {}  # filename => [Google::Protobuf::Descriptor, ...]
-      file_services = {}  # filename => [{ name:, rpc_descs: }, ...]
+      file_messages = {}  # filename => { file_descriptor:, descriptors: [] }
+      file_services = {}  # filename => [{ service_name:, klass: }, ...]
 
-      # Collect message descriptors
+      # Single pass over all classes
       ObjectSpace.each_object(Class).each do |klass|
-        next unless safe_respond_to?(klass, :descriptor)
-
-        desc = safe_call(klass, :descriptor)
-        next unless desc.is_a?(Google::Protobuf::Descriptor)
-
-        fd = desc.file_descriptor
-        next unless fd
-
-        filename = fd.name
-        file_messages[filename] ||= { file_descriptor: fd, descriptors: [] }
-        file_messages[filename][:descriptors] << desc
-      end
-
-      # Collect service descriptors
-      ObjectSpace.each_object(Class).each do |klass|
-        next unless safe_respond_to?(klass, :service_name)
-        next unless klass.included_modules.include?(GRPC::GenericService)
-
-        service_name = klass.service_name
-        next if service_name.nil? || service_name.empty?
-
-        @service_names << service_name
-
-        # Find the file this service belongs to via its RPC input types
-        filename = nil
-        if klass.respond_to?(:rpc_descs)
-          klass.rpc_descs.each_value do |rpc_desc|
-            input_type = rpc_desc.input
-            input_type = input_type.type if input_type.is_a?(GRPC::RpcDesc::Stream)
-            if safe_respond_to?(input_type, :descriptor)
-              input_desc = safe_call(input_type, :descriptor)
-              if input_desc && input_desc.respond_to?(:file_descriptor) && input_desc.file_descriptor
-                filename = input_desc.file_descriptor.name
-                break
-              end
+        # Check for protobuf message class
+        if safe_respond_to?(klass, :descriptor)
+          desc = safe_call(klass, :descriptor)
+          if desc.is_a?(Google::Protobuf::Descriptor)
+            fd = desc.file_descriptor
+            if fd
+              filename = fd.name
+              file_messages[filename] ||= { file_descriptor: fd, descriptors: [] }
+              file_messages[filename][:descriptors] << desc
             end
           end
         end
 
-        if filename
-          file_services[filename] ||= []
-          file_services[filename] << { service_name: service_name, klass: klass }
+        # Check for gRPC service class
+        if safe_respond_to?(klass, :service_name)
+          begin
+            next unless klass.included_modules.include?(GRPC::GenericService)
+          rescue StandardError
+            next
+          end
+
+          service_name = klass.service_name
+          next if service_name.nil? || service_name.empty?
+
+          @service_names << service_name
+
+          # Find file via RPC input types
+          filename = find_service_filename(klass)
+          if filename
+            file_services[filename] ||= []
+            file_services[filename] << { service_name: service_name, klass: klass }
+          end
         end
       end
 
-      # Build serialized FileDescriptorProtos for each file
+      # Build serialized FileDescriptorProtos
       all_filenames = (file_messages.keys + file_services.keys).uniq
       all_filenames.each do |filename|
         msgs = file_messages[filename]
@@ -125,14 +114,28 @@ module GrpcReflection
         serialized = build_file_descriptor_proto(filename, fd_obj, msg_descriptors, svc_entries)
         @files_by_name[filename] = serialized
 
-        # Index symbols
         msg_descriptors.each { |desc| @files_by_symbol[desc.name] = serialized }
         svc_entries.each { |entry| @files_by_symbol[entry[:service_name]] = serialized }
       end
     end
 
+    def find_service_filename(klass)
+      return nil unless klass.respond_to?(:rpc_descs)
+
+      klass.rpc_descs.each_value do |rpc_desc|
+        input_type = rpc_desc.input
+        input_type = input_type.type if input_type.is_a?(GRPC::RpcDesc::Stream)
+        if safe_respond_to?(input_type, :descriptor)
+          input_desc = safe_call(input_type, :descriptor)
+          if input_desc && input_desc.respond_to?(:file_descriptor) && input_desc.file_descriptor
+            return input_desc.file_descriptor.name
+          end
+        end
+      end
+      nil
+    end
+
     def build_file_descriptor_proto(filename, fd_obj, msg_descriptors, svc_entries)
-      # Determine package from message/service names
       package = extract_package(msg_descriptors, svc_entries)
 
       file_proto = Google::Protobuf::FileDescriptorProto.new(
@@ -141,9 +144,44 @@ module GrpcReflection
         syntax: fd_obj ? fd_obj.syntax.to_s : 'proto3'
       )
 
-      # Add messages
+      # Separate top-level messages from nested ones
+      top_level = []
+      nested = []
+
       msg_descriptors.each do |desc|
-        file_proto.message_type << build_message_descriptor_proto(desc, package)
+        short_name = remove_package(desc.name, package)
+        if short_name.include?('.')
+          nested << desc
+        else
+          top_level << desc
+        end
+      end
+
+      # Build top-level messages
+      top_level_protos = {}
+      top_level.each do |desc|
+        short_name = remove_package(desc.name, package)
+        msg_proto = build_message_descriptor_proto(desc, package)
+        top_level_protos[short_name] = msg_proto
+        file_proto.message_type << msg_proto
+      end
+
+      # Nest child messages inside their parents
+      nested.each do |desc|
+        short_name = remove_package(desc.name, package)
+        parts = short_name.split('.')
+        child_name = parts.last
+        parent_name = parts[0..-2].join('.')
+
+        child_proto = build_message_descriptor_proto(desc, package)
+        child_proto.name = child_name
+
+        if top_level_protos[parent_name]
+          top_level_protos[parent_name].nested_type << child_proto
+        else
+          # Parent not found, add as top-level with original name
+          file_proto.message_type << child_proto
+        end
       end
 
       # Add services
@@ -180,10 +218,8 @@ module GrpcReflection
       desc.each_oneof do |oneof|
         msg_proto.oneof_decl << Google::Protobuf::OneofDescriptorProto.new(name: oneof.name)
 
-        # Mark fields belonging to this oneof
         desc.each do |field|
-          if field.respond_to?(:has?) && belongs_to_oneof?(field, oneof, desc)
-            # Find the field in msg_proto.field and set oneof_index
+          if belongs_to_oneof?(field, oneof)
             msg_proto.field.each do |fp|
               if fp.name == field.name
                 fp.oneof_index = oneof_index
@@ -231,7 +267,6 @@ module GrpcReflection
     end
 
     def extract_package(msg_descriptors, svc_entries)
-      # Get package from the first available fully-qualified name
       name = if svc_entries.any?
                svc_entries.first[:service_name]
              elsif msg_descriptors.any?
@@ -259,23 +294,23 @@ module GrpcReflection
       end
     end
 
+    def belongs_to_oneof?(field, oneof)
+      oneof.each do |oneof_field|
+        return true if oneof_field.name == field.name
+      end
+      false
+    rescue
+      false
+    end
+
     FIELD_TYPE_MAP = {
-      double: :TYPE_DOUBLE,
-      float: :TYPE_FLOAT,
-      int64: :TYPE_INT64,
-      uint64: :TYPE_UINT64,
-      int32: :TYPE_INT32,
-      fixed64: :TYPE_FIXED64,
-      fixed32: :TYPE_FIXED32,
-      bool: :TYPE_BOOL,
-      string: :TYPE_STRING,
-      bytes: :TYPE_BYTES,
-      uint32: :TYPE_UINT32,
-      enum: :TYPE_ENUM,
-      sfixed32: :TYPE_SFIXED32,
-      sfixed64: :TYPE_SFIXED64,
-      sint32: :TYPE_SINT32,
-      sint64: :TYPE_SINT64,
+      double: :TYPE_DOUBLE, float: :TYPE_FLOAT,
+      int64: :TYPE_INT64, uint64: :TYPE_UINT64, int32: :TYPE_INT32,
+      fixed64: :TYPE_FIXED64, fixed32: :TYPE_FIXED32,
+      bool: :TYPE_BOOL, string: :TYPE_STRING, bytes: :TYPE_BYTES,
+      uint32: :TYPE_UINT32, enum: :TYPE_ENUM,
+      sfixed32: :TYPE_SFIXED32, sfixed64: :TYPE_SFIXED64,
+      sint32: :TYPE_SINT32, sint64: :TYPE_SINT64,
       message: :TYPE_MESSAGE,
     }.freeze
 
@@ -291,15 +326,6 @@ module GrpcReflection
 
     def proto_field_label(label)
       LABEL_MAP[label] || :LABEL_OPTIONAL
-    end
-
-    def belongs_to_oneof?(field, oneof, desc)
-      oneof.each do |oneof_field|
-        return true if oneof_field.name == field.name
-      end
-      false
-    rescue
-      false
     end
 
     # --- Common methods ---
