@@ -91,6 +91,7 @@ module GrpcReflection
 
           service_name = klass.service_name
           next if service_name.nil? || service_name.empty?
+          next if @service_names.include?(service_name)
 
           @service_names << service_name
 
@@ -103,7 +104,16 @@ module GrpcReflection
         end
       end
 
-      # Build serialized FileDescriptorProtos
+      # Pass 1: Build symbol-to-filename index (needed for dependency resolution)
+      symbol_to_filename = {}
+      file_messages.each do |filename, data|
+        data[:descriptors].each { |desc| symbol_to_filename[desc.name] = filename }
+      end
+      file_services.each do |filename, entries|
+        entries.each { |entry| symbol_to_filename[entry[:service_name]] = filename }
+      end
+
+      # Pass 2: Build serialized FileDescriptorProtos with dependencies
       all_filenames = (file_messages.keys + file_services.keys).uniq
       all_filenames.each do |filename|
         msgs = file_messages[filename]
@@ -111,7 +121,7 @@ module GrpcReflection
         msg_descriptors = msgs ? msgs[:descriptors] : []
         svc_entries = file_services[filename] || []
 
-        serialized = build_file_descriptor_proto(filename, fd_obj, msg_descriptors, svc_entries)
+        serialized = build_file_descriptor_proto(filename, fd_obj, msg_descriptors, svc_entries, symbol_to_filename)
         @files_by_name[filename] = serialized
 
         msg_descriptors.each { |desc| @files_by_symbol[desc.name] = serialized }
@@ -135,8 +145,13 @@ module GrpcReflection
       nil
     end
 
-    def build_file_descriptor_proto(filename, fd_obj, msg_descriptors, svc_entries)
+    def build_file_descriptor_proto(filename, fd_obj, msg_descriptors, svc_entries, symbol_to_filename)
       package = extract_package(msg_descriptors, svc_entries)
+      dependencies = []
+
+      # Collect all symbol names defined in this file
+      local_symbols = {}
+      msg_descriptors.each { |desc| local_symbols[desc.name] = true }
 
       file_proto = Google::Protobuf::FileDescriptorProto.new(
         name: filename,
@@ -144,12 +159,16 @@ module GrpcReflection
         syntax: fd_obj ? fd_obj.syntax.to_s : 'proto3'
       )
 
-      # Separate top-level messages from nested ones
+      # Deduplicate and separate top-level from nested
+      seen_names = {}
       top_level = []
       nested = []
 
       msg_descriptors.each do |desc|
         short_name = remove_package(desc.name, package)
+        next if seen_names[short_name]
+        seen_names[short_name] = true
+
         if short_name.include?('.')
           nested << desc
         else
@@ -189,7 +208,46 @@ module GrpcReflection
         file_proto.service << build_service_descriptor_proto(entry, package)
       end
 
+      # Collect cross-file dependencies from field type references
+      collect_file_dependencies(file_proto, local_symbols, dependencies, symbol_to_filename)
+      dependencies.uniq.each { |dep| file_proto.dependency << dep }
+
       Google::Protobuf::FileDescriptorProto.encode(file_proto)
+    end
+
+    def collect_file_dependencies(file_proto, local_symbols, dependencies, symbol_to_filename)
+      file_proto.message_type.each do |msg|
+        collect_msg_dependencies(msg, local_symbols, dependencies, symbol_to_filename)
+      end
+
+      file_proto.service.each do |svc|
+        svc['method'].each do |m|
+          check_type_dependency(m.input_type, local_symbols, dependencies, symbol_to_filename)
+          check_type_dependency(m.output_type, local_symbols, dependencies, symbol_to_filename)
+        end
+      end
+    end
+
+    def collect_msg_dependencies(msg_proto, local_symbols, dependencies, symbol_to_filename)
+      msg_proto.field.each do |field|
+        next if field.type_name.nil? || field.type_name.empty?
+        check_type_dependency(field.type_name, local_symbols, dependencies, symbol_to_filename)
+      end
+
+      msg_proto.nested_type.each do |nested|
+        collect_msg_dependencies(nested, local_symbols, dependencies, symbol_to_filename)
+      end
+    end
+
+    def check_type_dependency(type_name, local_symbols, dependencies, symbol_to_filename)
+      return if type_name.nil? || type_name.empty?
+
+      full_name = type_name.start_with?('.') ? type_name[1..] : type_name
+
+      unless local_symbols[full_name]
+        dep_filename = symbol_to_filename[full_name]
+        dependencies << dep_filename if dep_filename
+      end
     end
 
     def build_message_descriptor_proto(desc, package)
