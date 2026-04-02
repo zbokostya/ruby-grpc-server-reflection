@@ -162,7 +162,7 @@ module GrpcReflection
     end
 
     def build_file_descriptor_proto(filename, fd_obj, msg_descriptors, enum_descriptors, svc_entries, symbol_to_filename)
-      package = extract_package(msg_descriptors, svc_entries)
+      package = extract_package(msg_descriptors, enum_descriptors, svc_entries)
       dependencies = []
 
       # Collect all symbol names defined in this file
@@ -380,11 +380,17 @@ module GrpcReflection
       svc_proto
     end
 
-    def extract_package(msg_descriptors, svc_entries)
+    def extract_package(msg_descriptors, enum_descriptors, svc_entries)
+      # Use service or top-level message name to derive package.
+      # For enums, find a non-nested one (no message parent).
       name = if svc_entries.any?
                svc_entries.first[:service_name]
              elsif msg_descriptors.any?
-               msg_descriptors.first.name
+               # Use a top-level message (no dots after removing obvious package)
+               top = msg_descriptors.find { |d| !d.name.split('.').last.match?(/^[A-Z].*\./) }
+               top ? top.name : msg_descriptors.first.name
+             elsif enum_descriptors.any?
+               enum_descriptors.first.name
              end
       return '' unless name
 
