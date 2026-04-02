@@ -2,7 +2,7 @@
 # Source: test.proto for package 'test'
 
 require 'grpc'
-require 'test_pb'
+require_relative 'test_pb'
 
 module Test
   module TestService
