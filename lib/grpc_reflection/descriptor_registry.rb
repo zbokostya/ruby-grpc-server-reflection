@@ -64,11 +64,11 @@ module GrpcReflection
 
     def build_index_from_object_space
       file_messages = {}  # filename => { file_descriptor:, descriptors: [] }
+      file_enums = {}     # filename => [Google::Protobuf::EnumDescriptor, ...]
       file_services = {}  # filename => [{ service_name:, klass: }, ...]
 
-      # Single pass over all classes
+      # Collect message descriptors and service classes
       ObjectSpace.each_object(Class).each do |klass|
-        # Check for protobuf message class
         if safe_respond_to?(klass, :descriptor)
           desc = safe_call(klass, :descriptor)
           if desc.is_a?(Google::Protobuf::Descriptor)
@@ -81,7 +81,6 @@ module GrpcReflection
           end
         end
 
-        # Check for gRPC service class
         if safe_respond_to?(klass, :service_name)
           begin
             next unless klass.included_modules.include?(GRPC::GenericService)
@@ -95,7 +94,6 @@ module GrpcReflection
 
           @service_names << service_name
 
-          # Find file via RPC input types
           filename = find_service_filename(klass)
           if filename
             file_services[filename] ||= []
@@ -104,27 +102,45 @@ module GrpcReflection
         end
       end
 
-      # Pass 1: Build symbol-to-filename index (needed for dependency resolution)
+      # Collect enum descriptors
+      ObjectSpace.each_object(Google::Protobuf::EnumDescriptor).each do |enum_desc|
+        fd = enum_desc.file_descriptor
+        next unless fd
+
+        filename = fd.name
+        file_enums[filename] ||= []
+        file_enums[filename] << enum_desc
+
+        # Ensure we have the file_descriptor recorded
+        file_messages[filename] ||= { file_descriptor: fd, descriptors: [] }
+      end
+
+      # Build symbol-to-filename index
       symbol_to_filename = {}
       file_messages.each do |filename, data|
         data[:descriptors].each { |desc| symbol_to_filename[desc.name] = filename }
+      end
+      file_enums.each do |filename, enums|
+        enums.each { |desc| symbol_to_filename[desc.name] = filename }
       end
       file_services.each do |filename, entries|
         entries.each { |entry| symbol_to_filename[entry[:service_name]] = filename }
       end
 
       # Pass 2: Build serialized FileDescriptorProtos with dependencies
-      all_filenames = (file_messages.keys + file_services.keys).uniq
+      all_filenames = (file_messages.keys + file_services.keys + file_enums.keys).uniq
       all_filenames.each do |filename|
         msgs = file_messages[filename]
         fd_obj = msgs ? msgs[:file_descriptor] : nil
         msg_descriptors = msgs ? msgs[:descriptors] : []
+        enum_descriptors = file_enums[filename] || []
         svc_entries = file_services[filename] || []
 
-        serialized = build_file_descriptor_proto(filename, fd_obj, msg_descriptors, svc_entries, symbol_to_filename)
+        serialized = build_file_descriptor_proto(filename, fd_obj, msg_descriptors, enum_descriptors, svc_entries, symbol_to_filename)
         @files_by_name[filename] = serialized
 
         msg_descriptors.each { |desc| @files_by_symbol[desc.name] = serialized }
+        enum_descriptors.each { |desc| @files_by_symbol[desc.name] = serialized }
         svc_entries.each { |entry| @files_by_symbol[entry[:service_name]] = serialized }
       end
     end
@@ -145,13 +161,14 @@ module GrpcReflection
       nil
     end
 
-    def build_file_descriptor_proto(filename, fd_obj, msg_descriptors, svc_entries, symbol_to_filename)
+    def build_file_descriptor_proto(filename, fd_obj, msg_descriptors, enum_descriptors, svc_entries, symbol_to_filename)
       package = extract_package(msg_descriptors, svc_entries)
       dependencies = []
 
       # Collect all symbol names defined in this file
       local_symbols = {}
       msg_descriptors.each { |desc| local_symbols[desc.name] = true }
+      enum_descriptors.each { |desc| local_symbols[desc.name] = true }
 
       file_proto = Google::Protobuf::FileDescriptorProto.new(
         name: filename,
@@ -203,6 +220,30 @@ module GrpcReflection
         end
       end
 
+      # Add enums (top-level and nested)
+      seen_enums = {}
+      enum_descriptors.each do |enum_desc|
+        short_name = remove_package(enum_desc.name, package)
+        next if seen_enums[short_name]
+        seen_enums[short_name] = true
+
+        enum_proto = build_enum_descriptor_proto(enum_desc, package)
+
+        if short_name.include?('.')
+          # Nested enum — place inside parent message
+          parts = short_name.split('.')
+          parent_name = parts[0..-2].join('.')
+          enum_proto.name = parts.last
+          if top_level_protos[parent_name]
+            top_level_protos[parent_name].enum_type << enum_proto
+          else
+            file_proto.enum_type << enum_proto
+          end
+        else
+          file_proto.enum_type << enum_proto
+        end
+      end
+
       # Add services
       svc_entries.each do |entry|
         file_proto.service << build_service_descriptor_proto(entry, package)
@@ -213,6 +254,21 @@ module GrpcReflection
       dependencies.uniq.each { |dep| file_proto.dependency << dep }
 
       Google::Protobuf::FileDescriptorProto.encode(file_proto)
+    end
+
+    def build_enum_descriptor_proto(enum_desc, package)
+      short_name = remove_package(enum_desc.name, package)
+
+      enum_proto = Google::Protobuf::EnumDescriptorProto.new(name: short_name)
+
+      enum_desc.each do |name, number|
+        enum_proto.value << Google::Protobuf::EnumValueDescriptorProto.new(
+          name: name.to_s,
+          number: number
+        )
+      end
+
+      enum_proto
     end
 
     def collect_file_dependencies(file_proto, local_symbols, dependencies, symbol_to_filename)
