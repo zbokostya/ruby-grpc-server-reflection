@@ -52,25 +52,20 @@ module GrpcReflection
         handle_error(response, GRPC::Core::StatusCodes::NOT_FOUND, "File not found: #{filename}")
       else
         response.file_descriptor_response = Grpc::Reflection::V1::FileDescriptorResponse.new(
-          file_descriptor_proto: serialize_descriptors(descriptors)
+          file_descriptor_proto: descriptors
         )
       end
     end
 
     def handle_file_containing_symbol(response, symbol, registry)
-      file_entry = registry.find_file_by_symbol(symbol)
-      if file_entry.nil?
+      serialized = registry.find_file_by_symbol(symbol)
+      if serialized.nil?
         handle_error(response, GRPC::Core::StatusCodes::NOT_FOUND, "Symbol not found: #{symbol}")
       else
-        if file_entry.is_a?(String)
-          decoded = Google::Protobuf::FileDescriptorProto.decode(file_entry)
-          filename = decoded.name
-        else
-          filename = file_entry.name
-        end
-        descriptors = registry.file_descriptors_with_dependencies(filename)
+        decoded = Google::Protobuf::FileDescriptorProto.decode(serialized)
+        descriptors = registry.file_descriptors_with_dependencies(decoded.name)
         response.file_descriptor_response = Grpc::Reflection::V1::FileDescriptorResponse.new(
-          file_descriptor_proto: serialize_descriptors(descriptors)
+          file_descriptor_proto: descriptors
         )
       end
     end
@@ -95,18 +90,5 @@ module GrpcReflection
       )
     end
 
-    def serialize_descriptors(descriptors)
-      descriptors.map do |desc|
-        if desc.is_a?(String)
-          desc
-        elsif desc.respond_to?(:to_proto)
-          desc.to_proto
-        else
-          Google::Protobuf::FileDescriptorProto.encode(
-            Google::Protobuf::FileDescriptorProto.new(name: desc.name)
-          )
-        end
-      end
-    end
   end
 end
