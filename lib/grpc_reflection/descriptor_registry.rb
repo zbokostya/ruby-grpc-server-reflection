@@ -79,8 +79,8 @@ module GrpcReflection
         if klass.respond_to?(:rpc_descs)
           klass.rpc_descs.each_value do |desc|
             input_type = desc.input
-            if safe_respond_to?(input_type, :descriptor) && input_type.descriptor.respond_to?(:file_descriptor)
-              fd = input_type.descriptor.file_descriptor
+            if safe_respond_to?(input_type, :descriptor) && (input_desc = safe_call(input_type, :descriptor)) && input_desc.respond_to?(:file_descriptor)
+              fd = input_desc.file_descriptor
               if fd
                 @files_by_symbol[service_name] = fd
                 break
@@ -102,9 +102,15 @@ module GrpcReflection
     def index_symbols_from_object_space
       ObjectSpace.each_object(Class).each do |klass|
         next unless safe_respond_to?(klass, :descriptor)
-        next unless klass.descriptor.is_a?(Google::Protobuf::Descriptor)
 
-        desc = klass.descriptor
+        begin
+          desc = klass.descriptor
+        rescue StandardError, NotImplementedError
+          next
+        end
+
+        next unless desc.is_a?(Google::Protobuf::Descriptor)
+
         fd = desc.file_descriptor
         next unless fd
 
@@ -115,8 +121,14 @@ module GrpcReflection
 
     def safe_respond_to?(obj, method)
       obj.respond_to?(method)
-    rescue StandardError
+    rescue StandardError, NotImplementedError
       false
+    end
+
+    def safe_call(obj, method)
+      obj.send(method)
+    rescue StandardError, NotImplementedError
+      nil
     end
 
     def collect_dependencies(filename, visited)
