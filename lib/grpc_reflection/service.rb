@@ -10,26 +10,44 @@ module GrpcReflection
     #   GrpcReflection.reflect(s)  # adds reflection + auto-detects services
     #
     def reflect(server)
-      handlers = server.instance_variable_get(:@handlers)
-      if handlers
-        self.services = handlers.values.map do |handler|
-          handler.class if handler.class.respond_to?(:service_name)
-        end.compact
+      service_names = extract_service_names(server)
+      if service_names
+        @service_names = service_names
+      end
 
-        # Only register if not already handled
-        reflection_path = '/grpc.reflection.v1.ServerReflection/ServerReflectionInfo'
-        unless handlers.key?(reflection_path)
-          server.handle(Service)
-        end
-      else
+      # Only register if not already registered
+      rpc_descs = server.instance_variable_get(:@rpc_descs) || {}
+      reflection_key = :"/grpc.reflection.v1.ServerReflection/ServerReflectionInfo"
+      unless rpc_descs.key?(reflection_key)
         server.handle(Service)
       end
+    end
+
+    # @return [Array<String>, nil] service names registered on the server
+    def service_names
+      @service_names
+    end
+
+    private
+
+    def extract_service_names(server)
+      rpc_descs = server.instance_variable_get(:@rpc_descs)
+      return nil unless rpc_descs
+
+      # Keys are like :"/package.ServiceName/MethodName"
+      rpc_descs.keys.map do |key|
+        path = key.to_s
+        # Extract "/package.ServiceName/MethodName" => "package.ServiceName"
+        parts = path.split('/')
+        parts[1] if parts.length >= 3
+      end.compact.uniq
     end
   end
 
   class Service < Grpc::Reflection::V1::ServerReflection::Service
     def server_reflection_info(requests, _call)
-      registry = DescriptorRegistry.new(services: GrpcReflection.services)
+      allowed = GrpcReflection.service_names || GrpcReflection.services&.map(&:service_name)
+      registry = DescriptorRegistry.new(allowed_service_names: allowed)
 
       Enumerator.new do |yielder|
         requests.each do |request|

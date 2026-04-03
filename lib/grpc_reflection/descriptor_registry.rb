@@ -2,12 +2,14 @@ module GrpcReflection
   class DescriptorRegistry
     attr_reader :service_names
 
-    def initialize(services: nil)
+    def initialize(services: nil, allowed_service_names: nil)
       @files_by_name = {}
       @files_by_symbol = {}
       @service_names = []
       @extensions_by_type = {}
-      @allowed_services = if services
+      @allowed_services = if allowed_service_names
+                            allowed_service_names
+                          elsif services
                             services.map { |s| s.service_name }.compact
                           end
 
