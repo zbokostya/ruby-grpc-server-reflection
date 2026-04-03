@@ -310,6 +310,7 @@ module GrpcReflection
       short_name = remove_package(desc.name, package)
 
       msg_proto = Google::Protobuf::DescriptorProto.new(name: short_name)
+      pool = Google::Protobuf::DescriptorPool.generated_pool
 
       desc.each do |field|
         field_proto = Google::Protobuf::FieldDescriptorProto.new(
@@ -321,7 +322,18 @@ module GrpcReflection
         )
 
         if field.type == :message || field.type == :enum
-          field_proto.type_name = ".#{field.submsg_name}" if field.submsg_name
+          if field.submsg_name && field.submsg_name.include?('_MapEntry_')
+            # Map field — generate nested MapEntry type
+            map_entry = build_map_entry(field, pool)
+            if map_entry
+              msg_proto.nested_type << map_entry
+              field_proto.type_name = ".#{desc.name}.#{map_entry.name}"
+            else
+              field_proto.type_name = ".#{field.submsg_name}"
+            end
+          elsif field.submsg_name
+            field_proto.type_name = ".#{field.submsg_name}"
+          end
         end
 
         msg_proto.field << field_proto
@@ -346,6 +358,36 @@ module GrpcReflection
       end
 
       msg_proto
+    end
+
+    def build_map_entry(field, pool)
+      entry_desc = pool.lookup(field.submsg_name)
+      return nil unless entry_desc
+
+      # Extract a clean entry name from the submsg_name
+      # e.g. "...Response_MapEntry_custom_attributes" => "CustomAttributesEntry"
+      raw_suffix = field.submsg_name.split('_MapEntry_').last
+      entry_name = raw_suffix.split('_').map(&:capitalize).join + 'Entry'
+
+      entry_proto = Google::Protobuf::DescriptorProto.new(
+        name: entry_name,
+        options: Google::Protobuf::MessageOptions.new(map_entry: true)
+      )
+
+      entry_desc.each do |entry_field|
+        fp = Google::Protobuf::FieldDescriptorProto.new(
+          name: entry_field.name,
+          number: entry_field.number,
+          type: proto_field_type(entry_field.type),
+          label: proto_field_label(entry_field.label)
+        )
+        if (entry_field.type == :message || entry_field.type == :enum) && entry_field.submsg_name
+          fp.type_name = ".#{entry_field.submsg_name}"
+        end
+        entry_proto.field << fp
+      end
+
+      entry_proto
     end
 
     def build_service_descriptor_proto(entry, package)
