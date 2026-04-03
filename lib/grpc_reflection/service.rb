@@ -15,8 +15,15 @@ module GrpcReflection
         self.services = handlers.values.map do |handler|
           handler.class if handler.class.respond_to?(:service_name)
         end.compact
+
+        # Only register if not already handled
+        reflection_path = '/grpc.reflection.v1.ServerReflection/ServerReflectionInfo'
+        unless handlers.key?(reflection_path)
+          server.handle(Service)
+        end
+      else
+        server.handle(Service)
       end
-      server.handle(Service)
     end
   end
 
