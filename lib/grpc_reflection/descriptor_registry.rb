@@ -381,20 +381,19 @@ module GrpcReflection
     end
 
     def extract_package(msg_descriptors, enum_descriptors, svc_entries)
-      # Use service or top-level message name to derive package.
-      # For enums, find a non-nested one (no message parent).
-      name = if svc_entries.any?
-               svc_entries.first[:service_name]
-             elsif msg_descriptors.any?
-               # Use a top-level message (no dots after removing obvious package)
-               top = msg_descriptors.find { |d| !d.name.split('.').last.match?(/^[A-Z].*\./) }
-               top ? top.name : msg_descriptors.first.name
-             elsif enum_descriptors.any?
-               enum_descriptors.first.name
-             end
-      return '' unless name
+      # Collect all fully-qualified names
+      all_names = []
+      svc_entries.each { |e| all_names << e[:service_name] }
+      msg_descriptors.each { |d| all_names << d.name }
+      enum_descriptors.each { |d| all_names << d.name }
 
-      parts = name.split('.')
+      return '' if all_names.empty?
+
+      # The package is the longest common prefix of all names (split by dot),
+      # excluding the final component(s) that are type names.
+      # Use the shortest name — its parent is the most reliable package.
+      shortest = all_names.min_by { |n| n.split('.').length }
+      parts = shortest.split('.')
       parts.length > 1 ? parts[0..-2].join('.') : ''
     end
 
