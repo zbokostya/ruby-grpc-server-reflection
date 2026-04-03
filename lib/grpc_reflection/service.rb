@@ -1,13 +1,23 @@
 module GrpcReflection
-  # Configure which services to reflect.
-  # If not set, all loaded services are reflected.
-  #
-  #   GrpcReflection.services = [
-  #     Bookmate::GrpcService,
-  #     Bookmate::V2::LegacybmGrpcService,
-  #   ]
   class << self
     attr_accessor :services
+
+    # Add reflection to a server, auto-detecting its registered services.
+    #
+    #   s = GRPC::RpcServer.new
+    #   s.handle(Bookmate::GrpcService)
+    #   s.handle(Bookmate::V2::LegacybmGrpcService)
+    #   GrpcReflection.reflect(s)  # adds reflection + auto-detects services
+    #
+    def reflect(server)
+      handlers = server.instance_variable_get(:@handlers)
+      if handlers
+        self.services = handlers.values.map do |handler|
+          handler.class if handler.class.respond_to?(:service_name)
+        end.compact
+      end
+      server.handle(Service)
+    end
   end
 
   class Service < Grpc::Reflection::V1::ServerReflection::Service
