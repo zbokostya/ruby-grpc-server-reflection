@@ -202,8 +202,9 @@ module GrpcReflection
         file_proto.message_type << msg_proto
       end
 
-      # Nest child messages inside their parents
-      nested.each do |desc|
+      # Nest child messages inside their parents (supports multi-level nesting)
+      # Sort by depth so parents are processed before children
+      nested.sort_by { |desc| remove_package(desc.name, package).count('.') }.each do |desc|
         short_name = remove_package(desc.name, package)
         parts = short_name.split('.')
         child_name = parts.last
@@ -212,10 +213,12 @@ module GrpcReflection
         child_proto = build_message_descriptor_proto(desc, package)
         child_proto.name = child_name
 
-        if top_level_protos[parent_name]
-          top_level_protos[parent_name].nested_type << child_proto
+        parent = top_level_protos[parent_name]
+        if parent
+          parent.nested_type << child_proto
+          # Register so deeper levels can find this as their parent
+          top_level_protos[short_name] = child_proto
         else
-          # Parent not found, add as top-level with original name
           file_proto.message_type << child_proto
         end
       end
