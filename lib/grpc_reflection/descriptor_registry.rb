@@ -2,11 +2,14 @@ module GrpcReflection
   class DescriptorRegistry
     attr_reader :service_names
 
-    def initialize
+    def initialize(services: nil)
       @files_by_name = {}
       @files_by_symbol = {}
       @service_names = []
       @extensions_by_type = {}
+      @allowed_services = if services
+                            services.map { |s| s.service_name }.compact
+                          end
 
       build_index
     end
@@ -91,6 +94,7 @@ module GrpcReflection
           service_name = klass.service_name
           next if service_name.nil? || service_name.empty?
           next if @service_names.include?(service_name)
+          next if @allowed_services && !@allowed_services.include?(service_name)
 
           @service_names << service_name
 
@@ -525,6 +529,7 @@ module GrpcReflection
     def index_services(fd, serialized)
       fd.each_service do |service|
         full_name = service.name
+        next if @allowed_services && !@allowed_services.include?(full_name)
         @service_names << full_name
         @files_by_symbol[full_name] = serialized
 

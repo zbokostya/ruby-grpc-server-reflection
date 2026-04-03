@@ -1,7 +1,18 @@
 module GrpcReflection
+  # Configure which services to reflect.
+  # If not set, all loaded services are reflected.
+  #
+  #   GrpcReflection.services = [
+  #     Bookmate::GrpcService,
+  #     Bookmate::V2::LegacybmGrpcService,
+  #   ]
+  class << self
+    attr_accessor :services
+  end
+
   class Service < Grpc::Reflection::V1::ServerReflection::Service
     def server_reflection_info(requests, _call)
-      registry = DescriptorRegistry.new
+      registry = DescriptorRegistry.new(services: GrpcReflection.services)
 
       Enumerator.new do |yielder|
         requests.each do |request|
