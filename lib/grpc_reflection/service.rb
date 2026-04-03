@@ -1,52 +1,17 @@
 module GrpcReflection
   class << self
+    # Manually set which services to reflect.
+    # If not set, auto-detects from the server's registered handlers.
+    #
+    #   GrpcReflection.services = [MyService, OtherService]
+    #   s.handle(GrpcReflection::Service)
+    #
     attr_accessor :services
-
-    # Add reflection to a server, auto-detecting its registered services.
-    #
-    #   s = GRPC::RpcServer.new
-    #   s.handle(Bookmate::GrpcService)
-    #   s.handle(Bookmate::V2::LegacybmGrpcService)
-    #   GrpcReflection.reflect(s)  # adds reflection + auto-detects services
-    #
-    def reflect(server)
-      service_names = extract_service_names(server)
-      if service_names
-        @service_names = service_names
-      end
-
-      # Only register if not already registered
-      rpc_descs = server.instance_variable_get(:@rpc_descs) || {}
-      reflection_key = :"/grpc.reflection.v1.ServerReflection/ServerReflectionInfo"
-      unless rpc_descs.key?(reflection_key)
-        server.handle(Service)
-      end
-    end
-
-    # @return [Array<String>, nil] service names registered on the server
-    def service_names
-      @service_names
-    end
-
-    private
-
-    def extract_service_names(server)
-      rpc_descs = server.instance_variable_get(:@rpc_descs)
-      return nil unless rpc_descs
-
-      # Keys are like :"/package.ServiceName/MethodName"
-      rpc_descs.keys.map do |key|
-        path = key.to_s
-        # Extract "/package.ServiceName/MethodName" => "package.ServiceName"
-        parts = path.split('/')
-        parts[1] if parts.length >= 3
-      end.compact.uniq
-    end
   end
 
   class Service < Grpc::Reflection::V1::ServerReflection::Service
-    def server_reflection_info(requests, _call)
-      allowed = GrpcReflection.service_names || GrpcReflection.services&.map(&:service_name)
+    def server_reflection_info(requests, call)
+      allowed = allowed_service_names(call)
       registry = DescriptorRegistry.new(allowed_service_names: allowed)
 
       Enumerator.new do |yielder|
@@ -58,6 +23,35 @@ module GrpcReflection
     end
 
     private
+
+    def allowed_service_names(call)
+      # Manual override takes priority
+      if GrpcReflection.services
+        return GrpcReflection.services.map(&:service_name).compact
+      end
+
+      # Auto-detect from server's registered RPCs
+      server = find_server(call)
+      return nil unless server
+
+      rpc_descs = server.instance_variable_get(:@rpc_descs)
+      return nil unless rpc_descs
+
+      rpc_descs.keys.map do |key|
+        parts = key.to_s.split('/')
+        parts[1] if parts.length >= 3
+      end.compact.uniq
+    end
+
+    def find_server(call)
+      return nil unless call
+
+      # Try to find the server via ObjectSpace
+      # In a running gRPC server, there's typically one RpcServer instance
+      ObjectSpace.each_object(GRPC::RpcServer).first
+    rescue
+      nil
+    end
 
     def handle_request(request, registry)
       response = Grpc::Reflection::V1::ServerReflectionResponse.new(
@@ -135,6 +129,5 @@ module GrpcReflection
         error_message: message
       )
     end
-
   end
 end

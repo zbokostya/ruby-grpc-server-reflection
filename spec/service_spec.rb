@@ -10,8 +10,7 @@ RSpec.describe GrpcReflection::Service do
 
   def call_with_requests(*requests)
     responses = []
-    mock_call = double('call')
-    output_enum = service.server_reflection_info(requests.each, mock_call)
+    output_enum = service.server_reflection_info(requests.each, nil)
     output_enum.each { |resp| responses << resp }
     responses
   end
