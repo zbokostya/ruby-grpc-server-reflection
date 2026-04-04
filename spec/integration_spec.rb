@@ -5,7 +5,7 @@ RSpec.describe 'Integration: Reflection Service', :integration do
   it 'can be added to a GRPC server and responds to list_services' do
     server = GRPC::RpcServer.new
     port = server.add_http2_port('127.0.0.1:0', :this_port_is_insecure)
-    server.handle(GrpcReflection::Service)
+    server.handle(GrpcServerReflection::Service)
 
     thread = Thread.new { server.run }
     sleep 0.5

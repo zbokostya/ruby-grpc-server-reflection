@@ -1,0 +1,6 @@
+require 'grpc'
+require 'google/protobuf'
+require 'grpc/reflection/v1/reflection_services_pb'
+require_relative 'grpc_server_reflection/version'
+require_relative 'grpc_server_reflection/descriptor_registry'
+require_relative 'grpc_server_reflection/service'

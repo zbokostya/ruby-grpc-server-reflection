@@ -1,10 +1,10 @@
 lib = File.expand_path('lib', __dir__)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
-require 'grpc_reflection/version'
+require 'grpc_server_reflection/version'
 
 Gem::Specification.new do |spec|
-  spec.name          = 'grpc-reflection'
-  spec.version       = GrpcReflection::VERSION
+  spec.name          = 'grpc-server-reflection'
+  spec.version       = GrpcServerReflection::VERSION
   spec.authors       = ['zbokostya']
   spec.summary       = 'gRPC Server Reflection Protocol v1 for Ruby'
   spec.description   = 'Implements the gRPC Server Reflection Protocol v1, enabling tools like grpcurl and Postman to introspect gRPC services.'

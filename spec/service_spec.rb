@@ -1,7 +1,7 @@
 require 'spec_helper'
 require_relative 'protos/test_services_pb'
 
-RSpec.describe GrpcReflection::Service do
+RSpec.describe GrpcServerReflection::Service do
   let(:service) { described_class.new }
 
   def make_request(attrs = {})

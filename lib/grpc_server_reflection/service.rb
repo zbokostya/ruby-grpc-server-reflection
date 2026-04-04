@@ -1,18 +1,17 @@
-module GrpcReflection
+module GrpcServerReflection
   class << self
     # Manually set which services to reflect.
     # If not set, auto-detects from the server's registered handlers.
     #
-    #   GrpcReflection.services = [MyService, OtherService]
-    #   s.handle(GrpcReflection::Service)
+    #   GrpcServerReflection.services = [MyService, OtherService]
+    #   s.handle(GrpcServerReflection::Service)
     #
     attr_accessor :services
   end
 
   class Service < Grpc::Reflection::V1::ServerReflection::Service
     def server_reflection_info(requests, call)
-      allowed = allowed_service_names(call)
-      registry = DescriptorRegistry.new(allowed_service_names: allowed)
+      registry = self.class.registry_for(allowed_service_names(call))
 
       Enumerator.new do |yielder|
         requests.each do |request|
@@ -22,12 +21,35 @@ module GrpcReflection
       end
     end
 
+    # Class-level registry cache. Reset with `GrpcServerReflection::Service.reset_registry!`
+    class << self
+      def registry_for(allowed)
+        @mutex ||= Mutex.new
+        @mutex.synchronize do
+          cache_key = allowed ? allowed.sort : nil
+          if @registry_cache_key != cache_key
+            @registry = nil
+            @registry_cache_key = cache_key
+          end
+          @registry ||= DescriptorRegistry.new(allowed_service_names: allowed)
+        end
+      end
+
+      def reset_registry!
+        @mutex ||= Mutex.new
+        @mutex.synchronize do
+          @registry = nil
+          @registry_cache_key = nil
+        end
+      end
+    end
+
     private
 
     def allowed_service_names(call)
       # Manual override takes priority
-      if GrpcReflection.services
-        return GrpcReflection.services.map(&:service_name).compact
+      if GrpcServerReflection.services
+        return GrpcServerReflection.services.map(&:service_name).compact
       end
 
       # Auto-detect from server's registered RPCs
@@ -98,12 +120,11 @@ module GrpcReflection
     end
 
     def handle_file_containing_symbol(response, symbol, registry)
-      serialized = registry.find_file_by_symbol(symbol)
-      if serialized.nil?
+      filename = registry.find_filename_by_symbol(symbol)
+      if filename.nil?
         handle_error(response, GRPC::Core::StatusCodes::NOT_FOUND, "Symbol not found: #{symbol}")
       else
-        decoded = Google::Protobuf::FileDescriptorProto.decode(serialized)
-        descriptors = registry.file_descriptors_with_dependencies(decoded.name)
+        descriptors = registry.file_descriptors_with_dependencies(filename)
         response.file_descriptor_response = Grpc::Reflection::V1::FileDescriptorResponse.new(
           file_descriptor_proto: descriptors
         )

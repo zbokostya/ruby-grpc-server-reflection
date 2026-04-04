@@ -1,4 +1,4 @@
-require 'grpc_reflection'
+require 'grpc_server_reflection'
 
 RSpec.configure do |config|
   config.expect_with :rspec do |expectations|
