@@ -86,4 +86,43 @@ RSpec.describe GrpcServerReflection::Service do
       expect(responses[1].file_descriptor_response).not_to be_nil
     end
   end
+
+  describe 'server registration' do
+    it 'can register Service on a server without error' do
+      server = GRPC::RpcServer.new
+      server.add_http2_port('127.0.0.1:0', :this_port_is_insecure)
+
+      expect {
+        server.handle(GrpcServerReflection::Service)
+      }.not_to raise_error
+    end
+
+    it 'second handle call raises RuntimeError from gRPC server' do
+      server = GRPC::RpcServer.new
+      server.add_http2_port('127.0.0.1:0', :this_port_is_insecure)
+      server.handle(GrpcServerReflection::Service)
+
+      expect {
+        server.handle(GrpcServerReflection::Service)
+      }.to raise_error(RuntimeError)
+    end
+  end
+
+  describe 'auto-detect services from @rpc_descs' do
+    it 'extracts service names from rpc_descs keys' do
+      server = GRPC::RpcServer.new
+      server.add_http2_port('127.0.0.1:0', :this_port_is_insecure)
+      server.handle(Test::TestService::Service)
+
+      rpc_descs = server.instance_variable_get(:@rpc_descs)
+      expect(rpc_descs).not_to be_nil
+
+      service_names = rpc_descs.keys.map do |key|
+        parts = key.to_s.split('/')
+        parts[1] if parts.length >= 3
+      end.compact.uniq
+
+      expect(service_names).to include('test.TestService')
+    end
+  end
 end

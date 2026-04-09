@@ -1,6 +1,7 @@
 require 'spec_helper'
 $LOAD_PATH.unshift(File.join(__dir__, 'protos')) unless $LOAD_PATH.include?(File.join(__dir__, 'protos'))
 require_relative 'protos/test_services_pb'
+require_relative 'protos/complex_services_pb'
 
 RSpec.describe GrpcServerReflection::DescriptorRegistry do
   subject(:registry) { described_class.new }
@@ -54,6 +55,32 @@ RSpec.describe GrpcServerReflection::DescriptorRegistry do
   describe '#find_extension_numbers' do
     it 'returns empty array for type with no extensions' do
       expect(registry.find_extension_numbers('test.TestRequest')).to eq([])
+    end
+  end
+
+  describe 'allowed_service_names filtering' do
+    it 'filters registry to only specified service names' do
+      registry = described_class.new(allowed_service_names: ['test.TestService'])
+
+      services = registry.list_services
+      expect(services).to include('test.TestService')
+      expect(services).not_to include('showcase.ProfileService')
+    end
+
+    it 'returns all services when allowed_service_names is nil' do
+      services = registry.list_services
+      expect(services).to include('test.TestService')
+      expect(services).to include('showcase.ProfileService')
+    end
+  end
+
+  describe 'services parameter filtering' do
+    it 'filters to only specified service classes' do
+      registry = described_class.new(services: [Test::TestService::Service])
+
+      services = registry.list_services
+      expect(services).to include('test.TestService')
+      expect(services).not_to include('showcase.ProfileService')
     end
   end
 end
