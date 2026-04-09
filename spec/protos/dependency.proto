@@ -1,0 +1,18 @@
+syntax = "proto3";
+package dep;
+
+import "complex.proto";
+
+// Service that references types from complex.proto (cross-file dependency)
+service DependencyService {
+  rpc ProcessProfile (ProcessRequest) returns (ProcessResponse);
+}
+
+message ProcessRequest {
+  showcase.Profile profile = 1;
+}
+
+message ProcessResponse {
+  bool success = 1;
+  showcase.Status status = 2;
+}

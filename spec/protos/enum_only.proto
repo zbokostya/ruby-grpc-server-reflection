@@ -1,0 +1,18 @@
+syntax = "proto3";
+package enumonly;
+
+// File with only enums, no messages or services
+enum Priority {
+  PRIORITY_UNKNOWN = 0;
+  PRIORITY_LOW = 1;
+  PRIORITY_MEDIUM = 2;
+  PRIORITY_HIGH = 3;
+  PRIORITY_CRITICAL = 4;
+}
+
+enum Severity {
+  SEVERITY_UNKNOWN = 0;
+  SEVERITY_INFO = 1;
+  SEVERITY_WARNING = 2;
+  SEVERITY_ERROR = 3;
+}
