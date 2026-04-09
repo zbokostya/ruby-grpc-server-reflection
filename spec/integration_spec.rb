@@ -27,4 +27,32 @@ RSpec.describe 'Integration: Reflection Service', :integration do
       thread.join(5)
     end
   end
+
+  it 'can serve v1alpha reflection alongside v1' do
+    server = GRPC::RpcServer.new
+    port = server.add_http2_port('127.0.0.1:0', :this_port_is_insecure)
+    server.handle(GrpcServerReflection::Service)
+    server.handle(GrpcServerReflection::V1AlphaService)
+
+    thread = Thread.new { server.run }
+    sleep 0.5
+
+    begin
+      stub = Grpc::Reflection::V1alpha::ServerReflection::Stub.new(
+        "127.0.0.1:#{port}",
+        :this_channel_is_insecure
+      )
+
+      request = Grpc::Reflection::V1alpha::ServerReflectionRequest.new(list_services: '')
+      responses = stub.server_reflection_info([request])
+
+      response = responses.first
+      service_names = response.list_services_response.service.map(&:name)
+      expect(service_names).to include('grpc.reflection.v1alpha.ServerReflection')
+      expect(service_names).to include('grpc.reflection.v1.ServerReflection')
+    ensure
+      server.stop
+      thread.join(5)
+    end
+  end
 end
