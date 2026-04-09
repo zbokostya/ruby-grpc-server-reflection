@@ -6,8 +6,8 @@ Gem::Specification.new do |spec|
   spec.name          = 'grpc-server-reflection'
   spec.version       = GrpcServerReflection::VERSION
   spec.authors       = ['zbokostya']
-  spec.summary       = 'gRPC Server Reflection Protocol v1 for Ruby'
-  spec.description   = 'Implements the gRPC Server Reflection Protocol v1, enabling tools like grpcurl and Postman to introspect gRPC services.'
+  spec.summary       = 'gRPC Server Reflection Protocol for Ruby'
+  spec.description   = 'Implements the gRPC Server Reflection Protocol, enabling tools like grpcurl and Postman to introspect gRPC services.'
   spec.homepage      = 'https://github.com/zbokostya/ruby-grpc-server-reflection'
   spec.license       = 'MIT'
   spec.required_ruby_version = '>= 2.7'
