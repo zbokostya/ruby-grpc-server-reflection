@@ -1,6 +1,6 @@
 # grpc-server-reflection
 
-Ruby gem implementing the [gRPC Server Reflection Protocol v1](https://github.com/grpc/grpc/blob/master/doc/server-reflection.md). Enables tools like `grpcurl`, `grpcui`, and Postman to introspect your gRPC services without `.proto` files.
+Ruby gem implementing the [gRPC Server Reflection Protocol](https://github.com/grpc/grpc/blob/master/doc/server-reflection.md). Enables tools like `grpcurl`, `grpcui`, and Postman to introspect your gRPC services without `.proto` files.
 
 ## Installation
 
@@ -19,6 +19,7 @@ server = GRPC::RpcServer.new
 server.add_http2_port('0.0.0.0:50051', :this_port_is_insecure)
 server.handle(MyApp::GreeterService)
 server.handle(GrpcServerReflection::Service)  # Add reflection
+server.handle(GrpcServerReflection::V1AlphaService)  # Add v1alpha reflection
 server.run
 ```
 

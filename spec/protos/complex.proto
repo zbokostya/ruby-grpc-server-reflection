@@ -1,0 +1,73 @@
+syntax = "proto3";
+package showcase;
+
+// Enum at file level (for enum-only and top-level enum tests)
+enum Status {
+  STATUS_UNKNOWN = 0;
+  STATUS_ACTIVE = 1;
+  STATUS_INACTIVE = 2;
+}
+
+// Message with nested message, nested enum, map field, and oneof
+message Profile {
+  string id = 1;
+  string name = 2;
+  Status status = 3;
+  map<string, string> custom_attributes = 4;
+
+  // Nested enum
+  enum Role {
+    ROLE_UNKNOWN = 0;
+    ROLE_ADMIN = 1;
+    ROLE_USER = 2;
+  }
+
+  Role role = 5;
+
+  // Oneof
+  oneof contact {
+    string email = 6;
+    string phone = 7;
+  }
+
+  // Nested message (single level)
+  message Settings {
+    bool notifications = 1;
+    string locale = 2;
+
+    // Multi-level nested message (Settings.Privacy)
+    message Privacy {
+      bool public_profile = 1;
+      bool show_email = 2;
+    }
+
+    Privacy privacy = 3;
+  }
+
+  Settings settings = 8;
+}
+
+// Service referencing the complex types
+service ProfileService {
+  rpc GetProfile (GetProfileRequest) returns (Profile);
+  rpc ListProfiles (ListProfilesRequest) returns (stream Profile);
+  rpc UpdateProfiles (stream UpdateProfileRequest) returns (UpdateProfilesResponse);
+  rpc SyncProfiles (stream GetProfileRequest) returns (stream Profile);
+}
+
+message GetProfileRequest {
+  string id = 1;
+}
+
+message ListProfilesRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+message UpdateProfileRequest {
+  Profile profile = 1;
+}
+
+message UpdateProfilesResponse {
+  int32 updated_count = 1;
+}
